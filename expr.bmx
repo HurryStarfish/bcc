@@ -164,20 +164,23 @@ Type TExpr
 						args[i] = stmt
 					End If
 
-					' passing a non volatile local as Var from within a Try block?					
 					If TVarExpr(args[i]) Then
 						Local ldecl:TLocalDecl = TLocalDecl(TVarExpr(args[i]).decl)
 						If ldecl Then
+							' passing a non volatile local as Var from within a Try block?
 							If Not ldecl.volatile And Not ldecl.declaredInTry And _env.FindTry() Then
 								ldecl.volatile = True
 							End If
+							
+							' passing a read-only local as Var?
+							If ldecl.IsReadOnly() Then Err "Local variable '" + ldecl.ident + "' is read-only and cannot be used as a 'Var' parameter."
 						End If
 					End If
 				End If
 				
 				If (funcDecl.argDecls[i].ty._flags & TType.T_VAR) And Not (funcDecl.argDecls[i].ty.EqualsType(args[i].exprType)) Then
 					If (Not TObjectType(funcDecl.argDecls[i].ty)) Or (TObjectType(funcDecl.argDecls[i].ty) And Not args[i].exprType.ExtendsType(funcDecl.argDecls[i].ty)) Then
-						err "Variable for 'Var' parameter is not of matching type"
+						Err "Variable for 'Var' parameter is not of matching type"
 					End If
 				End If
 
@@ -1626,9 +1629,9 @@ Type TUnaryExpr Extends TExpr
 				If decl Then
 					Return New TInvokeMemberExpr.Create( expr, decl, Null ).Semant()
 				End If
-			Catch error:String
-				If error.StartsWith("Compile Error") Then
-					Throw error
+			Catch Error:String
+				If Error.StartsWith("Compile Error") Then
+					Throw Error
 				Else
 					Err "Operator " + op + " cannot be used with Objects."
 				End If
@@ -1740,9 +1743,9 @@ Type TBinaryMathExpr Extends TBinaryExpr
 				If decl Then
 					Return New TInvokeMemberExpr.Create( lhs, decl, args ).Semant()
 				End If
-			Catch error:String
-				If error.StartsWith("Compile Error") Then
-					Throw error
+			Catch Error:String
+				If Error.StartsWith("Compile Error") Then
+					Throw Error
 				Else
 					Err "Operator " + op + " cannot be used with Objects."
 				End If
@@ -1927,7 +1930,7 @@ Type TBinaryCompareExpr Extends TBinaryExpr
 				If decl Then
 					Return New TInvokeMemberExpr.Create( lhs, decl, args ).Semant()
 				End If
-			Catch error:String
+			Catch Error:String
 				' no overload, continue...
 			End Try
 		End If
@@ -2570,6 +2573,8 @@ Type TIdentExpr Extends TExpr
 				If Not ldecl.volatile And Not ldecl.declaredInTry And scope.FindTry() Then
 					ldecl.volatile = True
 				End If
+				
+				If ldecl.IsReadOnly() Then Err "Local variable '" + ident + "' is read-only and cannot be assigned to."
 
 			Else If TConstDecl( vdecl )
 '				If rhs Err "Constant '"+ident+"' cannot be modified."

@@ -2399,12 +2399,12 @@ t:+"NULLNULLNULL"
 		
 		Emit "BBOBJECT ex;"
 		If tryStmt.finallyStmt Then
-			' for a nested Try construct, only declare this label once, because leaving such a construct
-			' via Return, Exit Or Continue requires a jump to multiple Finally blocks in direct succession
-			' and the "inner" declarations of retptr wouldn't be visible to the "outer" Finally blocks
+			' for a nested Try/Using construct, only declare this label once, because leaving such a construct
+			' via Return, Exit Or Continue requires a jump to multiple Finally/Dispose blocks in direct succession
+			' and the "inner" declarations of retptr wouldn't be visible to the "outer" Finally/Dispose blocks
 			Local alreadyDeclared:Int = False
-			For Local t:TTryStmt = EachIn tryStack
-				If t.finallyStmt Then alreadyDeclared = True; Exit
+			For Local s:TExceptionBarrierStmt = EachIn tryStack
+				If TUsingStmt(s) Or (TTryStmt(s) And TTryStmt(s).finallyStmt) Then alreadyDeclared = True; Exit
 			Next
 			If Not alreadyDeclared Then
 				Emit "void* retptr = &&" + tryStmt.rethrowLabel.munged + ";"
@@ -2538,6 +2538,92 @@ t:+"NULLNULLNULL"
 		EmitLocalDeclarations f.block
 		EmitBlock f.block
 		Emit "}"
+	End Method
+	
+	Method TransUsingStmt$(usingStmt:TUsingStmt)
+		Emit "{"
+		
+		For Local d:TLocalDecl = EachIn usingStmt.usingDecls
+			MungDecl d
+		Next
+		
+		For Local l:TLoopLabelDecl = EachIn usingStmt.disposeLabels
+			MungDecl l
+		Next
+		MungDecl usingStmt.rethrowLabel
+		MungDecl usingStmt.endUsingLabel
+		
+		' Using decls without initialization
+		For Local d:Int = 0 Until usingStmt.usingDecls.length
+			Emit TransLocalDecl(usingStmt.usingDecls[d], usingStmt.usingDecls[d].init, True, False) + ";"
+		Next
+		
+		Emit "BBOBJECT volatile ex = 0;"
+		' for a nested Try/Using construct, only declare this label once, because leaving such a construct
+		' via Return, Exit Or Continue requires a jump to multiple Finally/Dispose blocks in direct succession
+		' and the "inner" declarations of retptr wouldn't be visible to the "outer" Finally/Dispose blocks
+		Local alreadyDeclared:Int = False
+		For Local s:TExceptionBarrierStmt = EachIn tryStack
+			If TUsingStmt(s) Or (TTryStmt(s) And TTryStmt(s).finallyStmt) Then alreadyDeclared = True; Exit
+		Next
+		If Not alreadyDeclared Then
+			Emit "void* retptr;"
+		End If
+		Emit "void* volatile disptr = &&" + usingStmt.rethrowLabel.munged + ";"
+		Emit "jmp_buf* buf = bbExEnter();"
+		Emit "switch(setjmp(*buf)) {"
+		
+		' inner block, containing the actual statements written inside the Using block:
+		Emit "case 0: {"
+		'todo push debug state
+		If opt_debug Then Emit "bbOnDebugPushExState();"
+		' Using decl initialization
+		For Local d:Int = 0 Until usingStmt.usingDecls.length
+			Emit TransAssignStmt(usingStmt.usingAssignStmts[d]) + ";"
+			Emit "disptr = &&" + usingStmt.disposeLabels[d].munged + ";"
+		Next
+		
+		EmitLocalDeclarations usingStmt.innerBlock
+		
+		'If opt_debug Then Emit "bbOnDebugPushExState();"
+		PushLoopTryStack usingStmt
+		tryStack.Push usingStmt
+		EmitBlock usingStmt.innerBlock
+		tryStack.Pop
+		PopLoopTryStack
+		'If opt_debug Then Emit "bbOnDebugPopExState();"
+		
+		Emit "retptr = &&" + usingStmt.endUsingLabel.munged + ";"
+		Emit "goto " + usingStmt.disposeLabels[usingStmt.usingDecls.length - 1].munged + ";"
+		Emit "}"
+		
+		' Dispose calls
+		Emit "default: {"
+		Emit "ex = bbExCatchAndReenter();"
+		Emit "retptr = &&" + usingStmt.rethrowLabel.munged + ";"
+		Emit "goto *disptr;"
+		
+		PushEnv usingStmt.disposeBlock
+		For Local d:Int = usingStmt.usingDecls.length - 1 To 0 Step -1
+			Emit TransLabel(usingStmt.disposeLabels[d])
+			Local nextLabel:TLoopLabelDecl
+			If d > 0 Then nextLabel = usingStmt.disposeLabels[d - 1] Else nextLabel = usingStmt.rethrowLabel
+			Emit "disptr = &&" + nextLabel.munged + ";"
+			'_errInfo = stmt.errInfo
+			Emit usingStmt.disposeStmts[d].Trans()
+		Next
+		PopEnv
+		
+		Emit TransLabel(usingStmt.rethrowLabel)
+		Emit "bbExLeave();"
+		If opt_debug Then Emit "bbOnDebugPopExState();"
+		'todo pop debug state
+		Emit "if (ex) bbExThrow(ex); else goto *retptr;"
+		
+		Emit "}"
+		Emit "}"
+		Emit "}"
+		Emit TransLabel(usingStmt.endUsingLabel)
 	End Method
 
 	Method EmitDebugEnterScope(block:TBlockDecl)

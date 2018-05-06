@@ -26,6 +26,7 @@ Const DECL_EXTERN:Int=        $010000
 Const DECL_PRIVATE:Int=       $020000
 Const DECL_ABSTRACT:Int=      $040000
 Const DECL_FINAL:Int=         $080000
+Const DECL_READONLY:Int=    $40000000
 
 Const DECL_SEMANTED:Int=      $100000
 Const DECL_SEMANTING:Int=     $200000
@@ -65,6 +66,7 @@ Const BLOCK_FINALLY:Int =   $008
 Const BLOCK_IF:Int =        $010
 Const BLOCK_ELSE:Int =      $020
 Const BLOCK_FUNCTION:Int =  $040
+Const BLOCK_USING:Int =     $080
 
 Const BLOCK_TRY_CATCH:Int = BLOCK_TRY | BLOCK_CATCH
 Const BLOCK_IF_ELSE:Int =   BLOCK_IF | BLOCK_ELSE
@@ -184,6 +186,10 @@ Type TDecl
 	
 	Method IsSemanted:Int()
 		Return (attrs & DECL_SEMANTED)<>0
+	End Method
+	
+	Method IsReadOnly:Int()
+		Return (attrs & DECL_READONLY)<>0
 	End Method
 	
 	Method IsSemanting:Int()
@@ -599,9 +605,10 @@ End Type
 Type TLocalDecl Extends TVarDecl
 
 	Field done:Int
-	Field volatile:Int = False
+	Field volatile:Int
 	Field declaredInTry:Int
-
+	'Field readonly:Int
+	
 	Method Create:TLocalDecl( ident$,ty:TType,init:TExpr,attrs:Int=0, generated:Int = False, volatile:Int = False )
 		Self.ident=ident
 		Self.declTy=ty
@@ -618,6 +625,7 @@ Type TLocalDecl Extends TVarDecl
 		decl.ty = ty
 		decl.init = init
 		decl.declaredInTry = declaredInTry
+		'decl.readonly = readonly
 		Return decl
 	End Method
 
@@ -3312,6 +3320,14 @@ Type TTryStmtDecl Extends TBlockDecl
 	
 	Method ToString:String()
 		Return "TTryStmtDecl"
+	End Method
+End Type
+
+Type TUsingStmtDecl Extends TBlockDecl
+	Field usingStmt:TUsingStmt
+	
+	Method ToString:String()
+		Return "TUsingStmtDecl"
 	End Method
 End Type
 

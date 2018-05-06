@@ -50,8 +50,8 @@ End If
 TGenProcessor.processor = New TParser
 
 Local app:TAppDecl 
-Local trans:TCTranslator 
-Try
+Local trans:TCTranslator
+'Try
 	If opt_verbose Then
 		Print "Parsing..."
 	End If
@@ -67,10 +67,10 @@ Try
 	trans = New TCTranslator
 
 	trans.TransApp(app)
-Catch error:String
-	WriteStderr error
-	exit_(-1) ' return a non-zero exit code
-End Try
+'Catch Error:String
+'	WriteStderr Error
+'	exit_(-1) ' return a non-zero exit code
+'End Try
 
 Local makeApp:Int = False
 If opt_apptype Then

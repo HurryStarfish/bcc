@@ -122,7 +122,7 @@ Type TTranslator
 	Method PushLoopTryStack(stmt:Object)
 		If loopTryStack.Length() = 0 Then
 			' Try statements can only be applied here to loops
-			If TTryStmt(stmt) = Null Then
+			If Not TExceptionBarrierStmt(stmt) Then
 				loopTryStack.Push stmt
 			End If
 		Else
@@ -136,7 +136,7 @@ Type TTranslator
 		Local count:Int
 		For Local stmt:Object = EachIn localScope
 			If TBlockDecl(stmt) Then
-				If TBlockDecl(stmt).blockType & BLOCK_TRY_CATCH Then
+				If TBlockDecl(stmt).blockType & (BLOCK_TRY_CATCH | BLOCK_USING) Then
 					lastTry = count
 				Else If TBlockDecl(stmt).blockType = endBlockType Then
 					firstBlock = count
@@ -162,7 +162,7 @@ Type TTranslator
 		Local count:Int = 0
 		
 		For Local stmt:Object = EachIn loopTryStack
-			If TTryStmt(stmt) = Null Then
+			If Not TExceptionBarrierStmt(stmt) Then
 				If findStmt And findStmt <> stmt Then
 					Continue
 				End If
@@ -175,12 +175,12 @@ Type TTranslator
 		Return count
 	End Method
 
-	Method LoopTryStmts:TTryStmt[](findStmt:TStmt)
-		Local stmts:TTryStmt[]
+	Method LoopTryStmts:TExceptionBarrierStmt[](findStmt:TStmt)
+		Local stmts:TExceptionBarrierStmt[]
 		
 		For Local stmt:Object = EachIn loopTryStack
-			If TTryStmt(stmt) Then
-				stmts :+ [TTryStmt(stmt)]
+			If TExceptionBarrierStmt(stmt) Then
+				stmts :+ [TExceptionBarrierStmt(stmt)]
 			Else
 				If findStmt And findStmt <> stmt Then
 					Continue
@@ -776,9 +776,9 @@ op = mapSymbol(op)
 	End Method
 	
 	Method CreateLocal$( expr:TExpr, init:Int = True, vol:Int = True )
-		Local tmp:TLocalDecl=New TLocalDecl.Create( "",expr.exprType,expr, True, , vol )
+		Local tmp:TLocalDecl=New TLocalDecl.Create( "", expr.exprType, expr, , True, vol )
 		MungDecl tmp
-		Emit TransLocalDecl( tmp,expr, True, init )+";"
+		Emit TransLocalDecl( tmp, expr, True, init )+";"
 
 		EmitGDBDebug(_errInfo)
 		
@@ -1135,32 +1135,34 @@ End Rem
 			contLoop = TLoopLabelExpr(stmt.label).loop
 		End If
 		' get Try statements in the stack in this loop
-		Local tryStmts:TTryStmt[] = LoopTryStmts(contLoop)
-		Local count:Int = tryStmts.length
+		Local ebStmts:TExceptionBarrierStmt[] = LoopTryStmts(contLoop)
+		Local count:Int = ebStmts.length
 		Local nowUnreachable:Int = False
 		If count > 0 Then
 			Local bc:TTryBreakCheck = GetTopLoop(contLoop)
 			If bc Then
 				NextContId(bc)
 				For Local i:Int = 0 Until count
-					Emit "bbExLeave();"
-					If opt_debug Then Emit "bbOnDebugPopExState();"
+					If TTryStmt(ebStmts[i]) Then
+						Emit "bbExLeave();"
+						If opt_debug Then Emit "bbOnDebugPopExState();"
+					End If
 					
 					' in debug we also roll back scope from first Try in scope down to the loop scope itself
 					If opt_debug And (i = count - 1) And stmt.loop And Not stmt.loop.block.IsNoDebug() Then
-
 						Local loopCount:Int = TryDownToBlockScopeCount(BLOCK_LOOP)
-
 						For Local n:Int = 0 Until loopCount
 							Emit "bbOnDebugLeaveScope();"
 						Next
 					End If
 
-					If tryStmts[i].finallyStmt Then
+					If TTryStmt(ebStmts[i]) And TTryStmt(ebStmts[i]).finallyStmt Then
 						Local returnLabelDecl:TLoopLabelDecl = New TLoopLabelDecl.Create("continue")
 						MungDecl returnLabelDecl
-						EmitFinallyJmp tryStmts[i].finallyStmt, returnLabelDecl
+						EmitFinallyJmp TTryStmt(ebStmts[i]).finallyStmt, returnLabelDecl
 						Emit TransLabel(returnLabelDecl)
+					Else If TUsingStmt(ebStmts[i]) Then
+						'todo
 					End If
 				Next
 				Emit "goto " + TransLabelCont(bc, False)
@@ -1215,33 +1217,35 @@ End Rem
 		If stmt.label And TLoopLabelExpr(stmt.label) Then
 			brkLoop = TLoopLabelExpr(stmt.label).loop
 		End If
-		' get Try statements in the stack in this loop
-		Local tryStmts:TTryStmt[] = LoopTryStmts(brkLoop)
-		Local count:Int = tryStmts.length
+		' get Try/Using statements in the stack in this loop
+		Local ebStmts:TExceptionBarrierStmt[] = LoopTryStmts(brkLoop)
+		Local count:Int = ebStmts.length
 		Local nowUnreachable:Int = False
 		If count > 0 Then
 			Local bc:TTryBreakCheck = GetTopLoop(brkLoop)
 			If bc Then
 				NextExitId(bc)
 				For Local i:Int = 0 Until count
-					Emit "bbExLeave();"
-					If opt_debug Then Emit "bbOnDebugPopExState();"
+					If TTryStmt(ebStmts[i]) Then
+						Emit "bbExLeave();"
+						If opt_debug Then Emit "bbOnDebugPopExState();"
+					End If
 					
 					' in debug we also roll back scope from first Try in scope down to the loop scope itself
 					If opt_debug And (i = count - 1) And stmt.loop And Not stmt.loop.block.IsNoDebug() Then
-
 						Local loopCount:Int = TryDownToBlockScopeCount(BLOCK_LOOP)
-
 						For Local n:Int = 0 Until loopCount
 							Emit "bbOnDebugLeaveScope();"
 						Next
 					End If
 					
-					If tryStmts[i].finallyStmt Then
+					If TTryStmt(ebStmts[i]) And TTryStmt(ebStmts[i]).finallyStmt Then
 						Local returnLabelDecl:TLoopLabelDecl = New TLoopLabelDecl.Create("break")
 						MungDecl returnLabelDecl
-						EmitFinallyJmp tryStmts[i].finallyStmt, returnLabelDecl
+						EmitFinallyJmp TTryStmt(ebStmts[i]).finallyStmt, returnLabelDecl
 						Emit TransLabel(returnLabelDecl)
+					Else If TUsingStmt(ebStmts[i]) Then
+						'todo
 					End If
 				Next
 				Emit "goto " + TransLabelExit(bc, False)
@@ -1296,6 +1300,8 @@ End Rem
 	
 	Method TransThrowStmt$( stmt:TThrowStmt )
 	End Method
+	
+	Method TransUsingStmt$(stmt:TUsingStmt) Abstract
 
 	Method TransBuiltinExpr$( expr:TBuiltinExpr )
 		If TMinExpr(expr) Return TransMinExpr(TMinExpr(expr))
@@ -1467,9 +1473,11 @@ End Rem
 				Local count:Int
 				
 				If stackSize Then
-					For Local tryStmt:TTryStmt = EachIn tryStack
-						Emit "bbExLeave();"
-						If opt_debug Then Emit "bbOnDebugPopExState();"
+					For Local ebStmt:TExceptionBarrierStmt = EachIn tryStack
+						If TTryStmt(ebStmt) Then
+							Emit "bbExLeave();"
+							If opt_debug Then Emit "bbOnDebugPopExState();"
+						End If
 						
 						' in debug we need to roll back scope from first Try in scope down to the function scope
 						If opt_debug And (count = stackSize - 1) And Not block.IsNoDebug() Then
@@ -1479,11 +1487,13 @@ End Rem
 							Next
 						End If
 	
-						If tryStmt.finallyStmt Then
+						If TTryStmt(ebStmt) And TTryStmt(ebStmt).finallyStmt Then
 							Local returnLabelDecl:TLoopLabelDecl = New TLoopLabelDecl.Create("return")
 							MungDecl returnLabelDecl
-							EmitFinallyJmp tryStmt.finallyStmt, returnLabelDecl
+							EmitFinallyJmp TTryStmt(ebStmt).finallyStmt, returnLabelDecl
 							Emit TransLabel(returnLabelDecl)
+						Else If TUsingStmt(ebStmt) Then
+							'todo
 						End If
 						
 						count :+ 1

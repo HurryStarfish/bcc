@@ -156,7 +156,7 @@ Type TAssignStmt Extends TStmt
 									rhs = Null
 									Return
 								End If
-							Catch error:String
+							Catch Error:String
 								Err "Operator " + op + " cannot be used with Objects."
 							End Try
 						End If
@@ -176,7 +176,7 @@ Type TAssignStmt Extends TStmt
 									rhs = Null
 									Return
 								End If
-							Catch error:String
+							Catch Error:String
 								Err "Operator " + op + " cannot be used with Objects."
 							End Try
 						End If
@@ -269,7 +269,10 @@ Type TReturnStmt Extends TStmt
 	End Method
 End Type
 
-Type TTryStmt Extends TStmt
+Type TExceptionBarrierStmt Extends TStmt Abstract ' statements that can intercept and examine exceptions propagating through the callstack	
+End Type
+
+Type TTryStmt Extends TExceptionBarrierStmt
 
 	Field block:TBlockDecl
 	Field catches:TCatchStmt[]
@@ -398,6 +401,133 @@ Type TThrowStmt Extends TStmt
 	' TODO
 		Return _trans.TransThrowStmt( Self )
 	End Method
+End Type
+
+Type TUsingStmt Extends TExceptionBarrierStmt
+	
+	Field usingBlock:TBlockDecl
+	Field usingDecls:TLocalDecl[]
+	Field innerBlock:TBlockDecl
+	
+	Field disposeLabels:TLoopLabelDecl[]
+	Field rethrowLabel:TLoopLabelDecl
+	Field endUsingLabel:TLoopLabelDecl
+	
+	Field usingAssignStmts:TAssignStmt[]
+	Field disposeStmts:TStmt[]
+	Field disposeBlock:TBlockDecl
+	
+	Method Create:TUsingStmt(usingBlock:TBlockDecl, usingDecls:TLocalDecl[], innerBlock:TBlockDecl)
+		Self.usingBlock = usingBlock
+		Self.usingDecls = usingDecls
+		Self.innerBlock = innerBlock
+		Self.disposeLabels = New TLoopLabelDecl[usingDecls.length]
+		For Local i:Int = 0 Until disposeLabels.length
+			disposeLabels[i] = New TLoopLabelDecl.Create("dispose")
+		Next
+		Self.rethrowLabel = New TLoopLabelDecl.Create("rethrow")
+		Self.endUsingLabel  = New TLoopLabelDecl.Create("endusing")
+		Return Self
+	End Method
+	
+	Method OnCopy:TStmt(scope:TScopeDecl)
+		Local usingDeclCopies:TLocalDecl[usingDecls.length]
+		For Local i:Int = 0 Until usingDeclCopies.length
+			usingDeclCopies[i] = TLocalDecl(usingDecls[i].Copy())
+		Next
+		Local usingBlockCopy:TBlockDecl = usingBlock.CopyBlock(scope)
+		Return New TUsingStmt.Create(usingBlockCopy, usingDeclCopies, innerBlock.CopyBlock(usingBlockCopy))
+	End Method
+	
+	Method OnSemant()
+		Function GetDisposableBaseType:TObjectType()
+			Local brlBlitzDecl:TModuleDecl = _env.FindModuleDecl("brl.blitz")
+			If Not brlBlitzDecl Then Err "Module 'BRL.Blitz' not found"
+			Local disposableBaseType:TType = brlBlitzDecl.FindType("idisposable", Null, Null)
+			If Not disposableBaseType Then Err "Type 'BRL.Blitz.IDisposable' not found"
+			If Not TObjectType(disposableBaseType) Then InternalErr
+			Return TObjectType(disposableBaseType)
+		End Function
+		Global disposableBaseType:TObjectType = GetDisposableBaseType()
+		Global disposeMethodBaseDecl:TFuncDecl = disposableBaseType.GetClass().FindFuncDecl("dispose", , , , , , SCOPE_CLASS_LOCAL)
+		
+		' if the Using block contains nothing but another Using block, merge the statements
+		Local innerStmtLink:TLink = innerBlock.stmts.FirstLink()
+		Local innerUsingStmt:TUsingStmt = TUsingStmt(innerStmtLink.Value())
+		If innerUsingStmt And Not innerStmtLink.NextLink() Then
+			For Local d:TLocalDecl = EachIn usingDecls
+				d.scope = innerUsingStmt.usingBlock
+			Next
+			innerUsingStmt.usingDecls = usingDecls + innerUsingStmt.usingDecls
+			innerUsingStmt.disposeLabels = disposeLabels + innerUsingStmt.disposeLabels
+			
+			innerUsingStmt.Semant
+			
+			usingBlock = innerUsingStmt.usingBlock
+			usingDecls = innerUsingStmt.usingDecls
+			innerBlock = innerUsingStmt.innerBlock
+			disposeLabels = innerUsingStmt.disposeLabels
+			rethrowLabel = innerUsingStmt.rethrowLabel
+			endUsingLabel = innerUsingStmt.endUsingLabel
+			usingAssignStmts = innerUsingStmt.usingAssignStmts
+			disposeStmts = innerUsingStmt.disposeStmts 
+			disposeBlock = innerUsingStmt.disposeBlock
+			
+			Return
+		End If
+		
+		' typecheck and semant the Using decls
+		PushEnv usingBlock
+		usingAssignStmts = New TAssignStmt[usingDecls.length]
+		For Local d:Int = 0 Until usingDecls.length
+			Local usingDecl:TLocalDecl = usingDecls[d]
+			usingDecl.Semant
+			If Not usingDecl.ty.ExtendsType(disposableBaseType) Then
+				' TODO: set proper error location
+				'PushErr usingDecl.errInfo
+				If usingDecl.generated Then 'If d < usingExprs.length Then
+					Err "Type of a Using expression must implement " + disposableBaseType.ToString() + "."
+				Else
+					Err "Type of a Using variable must implement " + disposableBaseType.ToString() + "."
+				End If
+				'PopErr
+			End If
+			If Not TObjectType(usingDecl.ty) Then InternalErr
+			Local usingDeclStmt:TDeclStmt = New TDeclStmt.Create(usingDecl, True)
+			usingBlock.AddStmt usingDeclStmt
+			usingDeclStmt.Semant
+			
+			usingAssignStmts[d] = New TAssignStmt.Create("=", New TVarExpr.Create(usingDecl), usingDecl.init, True)
+			usingAssignStmts[d].Semant
+		Next
+		PopEnv
+		
+		' construct "If d Then d.Dispose" statement for every Using decl
+		disposeBlock = New TBlockDecl.Create(usingBlock, True, BLOCK_FINALLY)
+		disposeStmts = New TStmt[usingDecls.length]
+		For Local d:Int = 0 Until usingDecls.length
+			Local usingDecl:TLocalDecl = usingDecls[d]
+			Local initExprType:TObjectType = TObjectType(usingDecl.declInit.Semant().exprType.Semant())
+			Local usingVarExpr:TVarExpr = New TVarExpr.Create(usingDecl)
+			Local invokeDisposeExpr:TInvokeMemberExpr = New TInvokeMemberExpr.Create(usingVarExpr, disposeMethodBaseDecl, Null, True)
+			Local invokeDisposeStmt:TExprStmt = New TExprStmt.Create(invokeDisposeExpr)
+			Local thenBlockDecl:TBlockDecl = New TBlockDecl.Create(disposeBlock, True, BLOCK_IF)
+			thenBlockDecl.AddStmt invokeDisposeStmt
+			Local elseBlockDecl:TBlockDecl = New TBlockDecl.Create(disposeBlock, True, BLOCK_ELSE)
+			Local ifExpr:TCastExpr = New TCastExpr.Create(New TBoolType, usingVarExpr, CAST_EXPLICIT)
+			Local ifStmt:TIfStmt = New TIfStmt.Create(ifExpr, thenBlockDecl, elseBlockDecl, True)
+			disposeStmts[d] = ifStmt
+			disposeStmts[d].Semant
+		Next
+		
+		usingBlock.Semant
+		innerBlock.Semant
+	End Method
+	
+	Method Trans$()
+		Return _trans.TransUsingStmt(Self)
+	End Method
+	
 End Type
 
 Type TLoopControlStmt Extends TStmt Abstract

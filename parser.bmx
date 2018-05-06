@@ -361,9 +361,9 @@ Type TParser Extends TGenProcessor
 		EndIf
 	End Method
 
-	Method DoErr(error:String, toker:TToker = Null)
+	Method DoErr( Error:String, toker:TToker = Null)
 		SetErr(toker)
-		Err error
+		Err Error
 	End Method
 
 	Method PushBlock( block:TBlockDecl )
@@ -2099,7 +2099,60 @@ End Rem
 		tryStmtDecl.tryStmt = tryStmt
 
 		_block.AddStmt tryStmt
+	End Method
+	
+	Method ParseUsingStmt()
+		Parse "using"
 		
+		Local usingStmtDecl:TUsingStmtDecl = TUsingStmtDecl(New TUsingStmtDecl.Create(_block))
+		Local usingBlock:TBlockDecl = New TBlockDecl.Create(usingStmtDecl, , BLOCK_USING)
+		
+		PushBlock usingStmtDecl
+		PushBlock usingBlock
+		
+		Local usingDecls:TLocalDecl[]
+		If _toke = "local" Then
+			usingDecls = TLocalDecl[](ParseDecls("local", DECL_READONLY, True).ToArray())
+			For Local decl:TLocalDecl = EachIn usingDecls
+				decl.volatile = True
+			Next
+		Else
+			Repeat
+				Local usingExpr:TExpr = ParseExpr()
+				usingDecls :+ [New TLocalDecl.Create("", usingExpr.exprType, usingExpr, DECL_READONLY, True, True)]
+			Until Not CParse(",")
+		End If
+		
+		Local innerBlock:TBlockDecl = New TBlockDecl.Create(usingBlock)
+		PushBlock innerBlock
+		While _toke<>"end" And _toke<>"endusing"
+			ParseStmt
+			
+			If _toke = "end" Then
+				NextToke
+				If _toke = "using" Then
+					' we are done with the using statement
+					Exit
+				Else
+					ParseEndStmt(False)
+				End If
+			End If
+		Wend
+		PopBlock
+		
+		If Not CParse("endusing") Then
+			NextToke
+			CParse "using"
+		End If
+		
+		PopBlock ' usingBlock
+		PopBlock ' usingStmtDecl
+		
+		Local usingStmt:TUsingStmt = New TUsingStmt.Create(usingBlock, usingDecls, innerBlock)
+		
+		usingStmtDecl.usingStmt = usingStmt
+		
+		_block.AddStmt usingStmt
 	End Method
 
 	Method ParseThrowStmt()
@@ -2304,6 +2357,8 @@ End Rem
 				ParseAssertStmt()
 			Case "try"
 				ParseTryStmt()
+			Case "using"
+				ParseUsingStmt()
 			Case "throw"
 				ParseThrowStmt()
 			Case "end"
@@ -2395,7 +2450,7 @@ End Rem
 		End Select
 	End Method
 
-	Method ParseDecl:TDecl( toke$,attrs:Int )
+	Method ParseDecl:TDecl( toke$,attrs:Int,requireInit:Int = False )
 
 		SetErr
 
@@ -2439,11 +2494,13 @@ End Rem
 				'Wend
 				init=New TNewArrayExpr.Create( ty,ln)
 				ty=New TArrayType.Create( ty, ln.length )
-			Else If toke<>"const"
-				init=New TConstExpr.Create( ty,"" )
-			Else
+			Else If toke = "const"
 				Err "Constants must be initialized."
-			EndIf
+			Else If requireInit
+				Err "Variable must be initialized."
+			Else
+				init=New TConstExpr.Create( ty,"" )
+			End If
 		EndIf
 		
 
@@ -2519,12 +2576,12 @@ End Rem
 		Return decl
 	End Method
 
-	Method ParseDecls:TList( toke$,attrs:Int )
+	Method ParseDecls:TList( toke$,attrs:Int,requireInit:Int = False )
 		If toke Parse toke
 
 		Local decls:TList=New TList'<Decl>
 		Repeat
-			Local decl:TDecl=ParseDecl( toke,attrs )
+			Local decl:TDecl=ParseDecl( toke,attrs,requireInit )
 			decls.AddLast decl
 			If Not CParse(",") Return decls
 		Forever
