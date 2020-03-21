@@ -698,6 +698,298 @@ Type TForStmt Extends TLoopStmt
 	End Method
 End Type
 
+Type TForEachinStmt Extends TLoopStmt
+	Field varid$
+	Field varty:TType
+	Field varlocal:Int
+	Field expr:TExpr
+	Field varExpr:TExpr
+	
+	Method Create:TForEachinStmt( varid$,varty:TType,varlocal:Int,expr:TExpr,block:TBlockDecl,loopLabel:TLoopLabelDecl,varExpr:TExpr )
+		Self.varid=varid
+		Self.varty=varty
+		Self.varlocal=varlocal
+		Self.expr=expr
+		Self.block=block
+		block.extra = Self
+		Self.loopLabel=loopLabel
+		Self.varExpr = varExpr
+		Return Self
+	End Method
+	
+	Method OnCopy:TStmt( scope:TScopeDecl )
+		If loopLabel Then
+			If varExpr Then
+				Return New TForEachinStmt.Create( varid,varty,varlocal,expr.Copy(),block.CopyBlock( scope ),TLoopLabelDecl(loopLabel.Copy()), varExpr.Copy() )
+			Else
+				Return New TForEachinStmt.Create( varid,varty,varlocal,expr.Copy(),block.CopyBlock( scope ),TLoopLabelDecl(loopLabel.Copy()), Null )
+			End If
+		Else
+			If varExpr Then
+				Return New TForEachinStmt.Create( varid,varty,varlocal,expr.Copy(),block.CopyBlock( scope ),Null, varExpr.Copy() )
+			Else
+				Return New TForEachinStmt.Create( varid,varty,varlocal,expr.Copy(),block.CopyBlock( scope ),Null, Null )
+			End If
+		End If
+	End Method
+	
+	Method OnSemant()
+		
+		expr=expr.Semant()
+		
+		If TArrayType( expr.exprType ) Or TStringType( expr.exprType )
+			
+			Local exprTmp:TLocalDecl=New TLocalDecl.Create( "",Null,expr,,True )
+			Local indexTmp:TLocalDecl=New TLocalDecl.Create( "",Null,New TConstExpr.Create( New TUIntType,"0" ),,True )
+			
+			Local lenExpr:TExpr=New TIdentExpr.Create( "Length",New TVarExpr.Create( exprTmp ) )
+			
+			Local cmpExpr:TExpr=New TBinaryCompareExpr.Create( "<",New TVarExpr.Create( indexTmp ),lenExpr )
+			
+			Local indexExpr:TExpr=New TIndexExpr.Create( New TVarExpr.Create( exprTmp ),[New TVarExpr.Create( indexTmp )] )
+			Local addExpr:TExpr=New TBinaryMathExpr.Create( "+",New TVarExpr.Create( indexTmp ),New TConstExpr.Create( New TIntType,"1" ) )
+			
+			Local cont:TContinueStmt
+			
+			If varlocal
+				
+				' array of object ?
+				
+				If TArrayType( expr.exprType ) And TObjectType(TArrayType( expr.exprType ).elemType) And (Not TObjectType(TArrayType( expr.exprType ).elemType).classdecl.IsExtern() ..
+							Or (TObjectType(TArrayType( expr.exprType ).elemType).classdecl.IsExtern() ..
+							And IsPointerType(TArrayType( expr.exprType ).elemType))) Then
+					
+					Local isStruct:Int = TObjectType(TArrayType( expr.exprType ).elemType).classdecl.IsStruct()
+					
+					Local cExpr:TExpr
+					
+					If TIdentType(varty) And TIdentType(varty).ident = "Object" Then
+						cExpr = indexExpr
+					Else
+						cExpr = New TCastExpr.Create( varty, indexExpr,CAST_EXPLICIT )
+					End If
+					
+					' local variable
+					Local varTmp:TLocalDecl=New TLocalDecl.Create( varid,varty,cExpr )
+					
+					' local var as expression
+					Local expr:TExpr=New TVarExpr.Create( varTmp )
+					
+					If Not isStruct Then
+						' var = Null
+						expr=New TBinaryCompareExpr.Create( "=",expr, New TNullExpr.Create(TType.nullObjectType))
+						
+						' then continue
+						Local thenBlock:TBlockDecl=New TBlockDecl.Create( block.scope, , BLOCK_IF )
+						Local elseBlock:TBlockDecl=New TBlockDecl.Create( block.scope, , BLOCK_ELSE )
+						cont = New TContinueStmt
+						thenBlock.AddStmt cont
+						
+						block.stmts.AddFirst New TIfStmt.Create( expr,thenBlock,elseBlock )
+					End If
+					block.stmts.AddFirst New TAssignStmt.Create( "=",New TVarExpr.Create( indexTmp ),addExpr )
+					block.stmts.AddFirst New TDeclStmt.Create( varTmp )
+					
+				Else
+					Local varTmp:TLocalDecl=New TLocalDecl.Create( varid,varty,indexExpr )
+					block.stmts.AddFirst New TAssignStmt.Create( "=",New TVarExpr.Create( indexTmp ),addExpr, True )
+					block.stmts.AddFirst New TDeclStmt.Create( varTmp, True )
+				End If
+			Else
+				
+				If TArrayType( expr.exprType ) And TObjectType(TArrayType( expr.exprType ).elemType) Then
+				' var = Null
+					If Not varty Then
+						varExpr = varExpr.Semant()
+						varty = varExpr.exprType
+						'Local decl:TValDecl = block.scope.FindValDecl(varid.ToLower())
+						
+						'If decl Then
+						'	decl.Semant()
+						'	
+						'	varty = decl.ty.Copy()
+						'End If
+					End If
+					
+					Local isStruct:Int = TObjectType(TArrayType( expr.exprType ).elemType).classdecl.IsStruct()
+					
+'					expr=New TBinaryCompareExpr.Create( "=",New TIdentExpr.Create( varid ), New TNullExpr.Create(TType.nullObjectType))
+					
+					If Not isStruct Then
+						expr=New TBinaryCompareExpr.Create( "=",varExpr, New TNullExpr.Create(TType.nullObjectType))
+						
+						' then continue
+						Local thenBlock:TBlockDecl=New TBlockDecl.Create( block.scope, , BLOCK_IF )
+						Local elseBlock:TBlockDecl=New TBlockDecl.Create( block.scope, , BLOCK_ELSE )
+						cont = New TContinueStmt
+						thenBlock.AddStmt cont
+						
+						block.stmts.AddFirst New TIfStmt.Create( expr,thenBlock,elseBlock )
+					End If
+					'block.stmts.AddFirst New TDeclStmt.Create( varTmp )
+					
+					block.stmts.AddFirst New TAssignStmt.Create( "=",New TVarExpr.Create( indexTmp ),addExpr, True )
+'					block.stmts.AddFirst New TAssignStmt.Create( "=",New TIdentExpr.Create( varid ),New TCastExpr.Create( varty, indexExpr,CAST_EXPLICIT ), True )
+					block.stmts.AddFirst New TAssignStmt.Create( "=",varExpr,New TCastExpr.Create( varty, indexExpr,CAST_EXPLICIT ), True )
+				Else
+					block.stmts.AddFirst New TAssignStmt.Create( "=",New TVarExpr.Create( indexTmp ),addExpr, True )
+'					block.stmts.AddFirst New TAssignStmt.Create( "=",New TIdentExpr.Create( varid ),indexExpr, True )
+					block.stmts.AddFirst New TAssignStmt.Create( "=",varExpr,indexExpr, True )
+				End If
+				
+			EndIf
+			
+			Local whileStmt:TWhileStmt=New TWhileStmt.Create( cmpExpr,block,loopLabel, True )
+			
+			block=New TBlockDecl.Create( block.scope, True, BLOCK_LOOP )
+			block.AddStmt New TDeclStmt.Create( exprTmp, True )
+			block.AddStmt New TDeclStmt.Create( indexTmp, True )
+			block.AddStmt whileStmt
+			
+			If cont Then
+				cont.loop = whileStmt
+			End If
+			
+		Else If TObjectType( expr.exprType )
+			Local tmpDecl:TDeclStmt
+			Local iterable:Int
+			
+			' ensure semanted
+			TObjectType(expr.exprType).classDecl.Semant()
+			
+			If TObjectType(expr.exprType).classDecl.ImplementsInterface("iiterable") Or (TObjectType(expr.exprType).classDecl.ident="IIterable" And TObjectType(expr.exprType).classDecl.IsInterface()) Then
+				iterable = True
+			Else
+				Local declList:TFuncDeclList = TFuncDeclList(TObjectType(expr.exprType).classDecl.GetDecl("objectenumerator"))
+				If Not declList Then
+					Err "Use of EachIn requires enumerable Type with either ObjectEnumerator method or one which implements IIterable interface."
+				End If
+			End If
+			
+			If TInvokeExpr(expr) Or TInvokeMemberExpr(expr) Then
+				Local tmpVar:TLocalDecl=New TLocalDecl.Create( "",expr.exprType,expr,,True )
+				tmpVar.Semant()
+				tmpDecl = New TDeclStmt.Create( tmpVar, True )
+				expr = New TVarExpr.Create( tmpVar )
+			End If
+			
+			Local enumerInit:TExpr
+			If iterable Then
+				enumerInit = New TFuncCallExpr.Create( New TIdentExpr.Create( "GetIterator",expr ) )
+			Else
+				enumerInit = New TFuncCallExpr.Create( New TIdentExpr.Create( "ObjectEnumerator",expr ) )
+			End If
+			Local enumerTmp:TLocalDecl=New TLocalDecl.Create( "",Null,enumerInit,,True )
+			
+			Local hasNextExpr:TExpr
+			If iterable Then
+				hasNextExpr = New TFuncCallExpr.Create( New TIdentExpr.Create( "MoveNext",New TVarExpr.Create( enumerTmp ) ) )
+			Else
+				hasNextExpr = New TFuncCallExpr.Create( New TIdentExpr.Create( "HasNext",New TVarExpr.Create( enumerTmp ) ) )
+			End If
+			
+			Local nextObjExpr:TExpr
+			If iterable Then
+				nextObjExpr = New TFuncCallExpr.Create( New TIdentExpr.Create( "Current",New TVarExpr.Create( enumerTmp ) ) )
+			Else
+				nextObjExpr = New TFuncCallExpr.Create( New TIdentExpr.Create( "NextObject",New TVarExpr.Create( enumerTmp ) ) )
+			End If
+			
+			Local cont:TContinueStmt
+			
+			If varlocal
+'				Local varTmp:TLocalDecl=New TLocalDecl.Create( varid,varty,nextObjExpr )
+'				block.stmts.AddFirst New TDeclStmt.Create( varTmp )
+				
+				Local cExpr:TExpr
+				
+				If iterable Or (TIdentType(varty) And TIdentType(varty).ident = "Object") Then
+					cExpr = nextObjExpr
+				Else
+					cExpr = New TCastExpr.Create( varty, nextObjExpr,CAST_EXPLICIT )
+				End If
+				
+				' local variable
+				Local varTmp:TLocalDecl=New TLocalDecl.Create( varid,varty,cExpr)
+				
+				If Not TNumericType(varty) Then
+					' local var as expression
+					Local expr:TExpr=New TVarExpr.Create( varTmp )
+					
+					' var = Null
+					expr=New TBinaryCompareExpr.Create( "=",expr, New TNullExpr.Create(TType.nullObjectType))
+					
+					' then continue
+					Local thenBlock:TBlockDecl=New TBlockDecl.Create( block.scope, True, BLOCK_IF )
+					Local elseBlock:TBlockDecl=New TBlockDecl.Create( block.scope, True, BLOCK_ELSE )
+					cont = New TContinueStmt.Create(Null, True)
+					thenBlock.AddStmt cont
+					
+					block.stmts.AddFirst New TIfStmt.Create( expr,thenBlock,elseBlock, True )
+				End If
+				block.stmts.AddFirst New TDeclStmt.Create( varTmp, True )
+			Else
+				
+				If Not varty Then
+					varExpr = varExpr.Semant()
+					varty = varExpr.exprType
+				End If
+				
+'				If Not varty Then
+'					Local decl:TValDecl = block.scope.FindValDecl(varid.ToLower())
+'					
+'					If decl Then
+'						decl.Semant()
+'						
+'						varty = decl.ty.Copy()
+'					End If
+'				End If
+				
+				' var = Null
+'				Local expr:TExpr=New TBinaryCompareExpr.Create( "=",New TIdentExpr.Create( varid ), New TNullExpr.Create(TType.nullObjectType))
+				If Not TNumericType(varty) Then
+					Local expr:TExpr=New TBinaryCompareExpr.Create( "=",varExpr, New TNullExpr.Create(TType.nullObjectType))
+					
+					' then continue
+					Local thenBlock:TBlockDecl=New TBlockDecl.Create( block.scope, ,BLOCK_IF )
+					Local elseBlock:TBlockDecl=New TBlockDecl.Create( block.scope, ,BLOCK_ELSE )
+					cont = New TContinueStmt
+					thenBlock.AddStmt cont
+					
+					block.stmts.AddFirst New TIfStmt.Create( expr,thenBlock,elseBlock )
+					'block.stmts.AddFirst New TDeclStmt.Create( varTmp )
+				
+				End If
+'				block.stmts.AddFirst New TAssignStmt.Create( "=",New TIdentExpr.Create( varid ),New TCastExpr.Create( varty, nextObjExpr,CAST_EXPLICIT ))
+				block.stmts.AddFirst New TAssignStmt.Create( "=",varExpr,New TCastExpr.Create( varty, nextObjExpr,CAST_EXPLICIT ))
+			EndIf
+			
+			Local whileStmt:TWhileStmt=New TWhileStmt.Create( hasNextExpr,block, loopLabel, True )
+			
+			block=New TBlockDecl.Create( block.scope, True, BLOCK_LOOP )
+			If tmpDecl Then
+				block.AddStmt tmpDecl
+			End If
+			block.AddStmt New TDeclStmt.Create( enumerTmp, True )
+			block.AddStmt whileStmt
+			
+			If cont Then
+				cont.loop = whileStmt
+			End If
+			
+		Else
+			InternalErr "TForEachinStmt.OnSemant"
+		EndIf
+		
+		block.Semant
+	End Method
+	
+	Method Trans$()
+		_trans.EmitBlock block
+	End Method
+	
+End Type
+
 Type TAssertStmt Extends TStmt
 	Field expr:TExpr
 	Field elseExpr:TExpr
