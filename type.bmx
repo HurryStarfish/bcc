@@ -1883,7 +1883,7 @@ Type TFunctionPtrType Extends TType
 
 	Method OnCopy:TType()
 		Local ty:TFunctionPtrType = New TFunctionPtrType
-		ty.func = func
+		ty.func = TFuncDecl(func.Copy())
 		Return ty
 	End Method
 

@@ -1822,6 +1822,7 @@ Const FUNC_METHOD:Int=   $0001			'mutually exclusive with ctor
 Const FUNC_CTOR:Int=     $0002
 Const FUNC_PROPERTY:Int= $0004
 Const FUNC_DTOR:Int=     $0008
+Const FUNC_LAMBDA:Int=   $0010
 Const FUNC_BUILTIN:Int = $0080
 Const FUNC_PTR:Int=      $0100
 Const FUNC_INIT:Int =    $0200
@@ -1846,6 +1847,7 @@ Type TFuncDecl Extends TBlockDecl
 	Field maybeFunctionPtr:Int
 	
 	Field returnTypeSubclassed:Int
+	Field inferReturnType:Int
 	
 	Field mangled:String
 	Field noMangle:Int
@@ -1863,6 +1865,9 @@ Type TFuncDecl Extends TBlockDecl
 		End If
 		Self.attrs=attrs
 		Self.blockType = BLOCK_FUNCTION
+		
+		If IsLambda() Then inferReturnType = True Else inferReturnType = False
+		
 		Return Self
 	End Method
 	
@@ -1890,7 +1895,7 @@ Type TFuncDecl Extends TBlockDecl
 		t.noMangle = noMangle
 		t.exported = exported
 		t.blockType = blockType
-		Return  t
+		Return t
 	End Method
 
 	Method GenInstance:TDecl()
@@ -1975,11 +1980,15 @@ Type TFuncDecl Extends TBlockDecl
 	Method IsProperty:Int()
 		Return (attrs & FUNC_PROPERTY)<>0
 	End Method
-
+	
 	Method IsField:Int()
 		Return (attrs & FUNC_FIELD)<>0
 	End Method
-		
+	
+	Method IsLambda:Int()
+		Return (attrs & FUNC_LAMBDA)<>0
+	End Method
+	
 	' exactMatch requires args to be equal. If an arg is a subclass, that is not a match.
 	Method EqualsArgs:Int( decl:TFuncDecl, exactMatch:Int = False ) ' careful, this is not commutative!
 		If argDecls.Length<>decl.argDecls.Length Return False
@@ -2029,49 +2038,51 @@ Type TFuncDecl Extends TBlockDecl
 			End If
 			If IsCtor() retTypeExpr=New TObjectType.Create( TNewDecl(Self).cDecl )
 		End If
-
-		'semant ret type
-		If Not retTypeExpr Then
-			If Not retType Then ' may have previously been set (if this is a function pointer)
-				retType = TType.voidType
-			Else If TIdentType(retType)
-				retType = retType.Semant()
+		
+		If Not inferReturnType Then
+			'semant ret type
+			If Not retTypeExpr Then
+				If Not retType Then ' may have previously been set (if this is a function pointer)
+					retType = TType.voidType
+				Else If TIdentType(retType)
+					retType = retType.Semant()
+				Else
+					' for Strict code, a void return type becomes Int
+					If TVoidType(retType) And Not ModuleScope().IsSuperStrict() Then
+						strictVoidToInt = True
+						retType = New TIntType
+					End If
+				End If
 			Else
+				' pass the scope into the function ptr
+				Local retTypeExpr_:TType = retTypeExpr
+				While TArrayType(retTypeExpr_) ' look into array types, since the element type might be function ptr
+					retTypeExpr_ = TArrayType(retTypeExpr_).elemType
+				Wend
+				If TFunctionPtrType(retTypeExpr_) Then
+					If Not TFunctionPtrType(retTypeExpr_).func.scope Then
+						If scope Then
+							TFunctionPtrType(retTypeExpr_).func.scope = scope
+						Else
+							TFunctionPtrType(retTypeExpr_).func.scope = _env
+						End If
+					End If
+				End If
+				retType=retTypeExpr.Semant()
+				
 				' for Strict code, a void return type becomes Int
-				If TVoidType(retType) And Not ModuleScope().IsSuperStrict() Then
+				If TVoidType(retType) And Not ModuleScope().IsSuperStrict() And Not IsDTor() Then
 					strictVoidToInt = True
 					retType = New TIntType
 				End If
 			End If
-		Else
-			' pass the scope into the function ptr
-			Local retTypeExpr_:TType = retTypeExpr
-			While TArrayType(retTypeExpr_) ' look into array types, since the element type might be function ptr
-				retTypeExpr_ = TArrayType(retTypeExpr_).elemType
-			Wend
-			If TFunctionPtrType(retTypeExpr_) Then
-				If Not TFunctionPtrType(retTypeExpr_).func.scope Then
-					If scope Then
-						TFunctionPtrType(retTypeExpr_).func.scope = scope
-					Else
-						TFunctionPtrType(retTypeExpr_).func.scope = _env
-					End If
-				End If
-			End If
-			retType=retTypeExpr.Semant()
 			
-			' for Strict code, a void return type becomes Int
-			If TVoidType(retType) And Not ModuleScope().IsSuperStrict() And Not IsDTor() Then
-				strictVoidToInt = True
-				retType = New TIntType
-			End If
+			retType = retType.Semant()
+			
+			If TArrayType( retType ) And Not retType.EqualsType( retType.ActualType() )
+				'Err "Return type cannot be an array of generic objects."
+			EndIf
 		End If
-		
-		retType = retType.Semant()
-		
-		If TArrayType( retType ) And Not retType.EqualsType( retType.ActualType() )
-'			Err "Return type cannot be an array of generic objects."
-		EndIf
 
 		'semant args
 		For Local arg:TArgDecl=EachIn argDecls
@@ -2085,9 +2096,9 @@ Type TFuncDecl Extends TBlockDecl
 		If actual<>Self Return
 		
 		'check for duplicate decl
-		If ident Then
+		If ident And Not generated Then
 			For Local decl:TFuncDecl=EachIn scope.SemantedFuncs( ident )
-				If decl<>Self And EqualsArgs( decl, True ) And Not decl.IsCTOR()
+				If decl<>Self And EqualsArgs( decl, True ) And Not (decl.IsCtor() Or decl.IsLambda())
 					Err "Duplicate declaration "+ToString()
 				EndIf
 				If noMangle Then
@@ -2189,6 +2200,14 @@ Type TFuncDecl Extends TBlockDecl
 		attrs:|DECL_SEMANTED
 		
 		Super.OnSemant()
+		
+		If inferReturnType Then 
+			' use body's type as the return type
+			Local returnStmt:TReturnStmt = TReturnStmt(stmts.First())
+			If Not returnStmt Then InternalErr("TFuncDecl.OnSemant")
+			retType = returnStmt.fRetType
+			retTypeExpr = retType
+		End If
 	End Method
 	
 	Method MatchesInterfaceFunction:Int(cdecl:TClassDecl, strictVoidToInt:Int, errorDetails:String Var)

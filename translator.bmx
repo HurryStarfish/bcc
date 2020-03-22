@@ -986,7 +986,7 @@ End Rem
 	End Method
 	
 	Method TransInvokeExpr$( expr:TInvokeExpr )
-		Local decl:TFuncDecl=TFuncDecl( expr.decl.actual ),t$
+		Local decl:TFuncDecl=TFuncDecl( expr.decl.actual )
 
 		If Not decl.munged Then
 			MungDecl decl
@@ -1017,7 +1017,7 @@ End Rem
 	End Method
 	
 	Method TransInvokeMemberExpr$( expr:TInvokeMemberExpr )
-		Local decl:TFuncDecl=TFuncDecl( expr.decl.actual ),t$
+		Local decl:TFuncDecl=TFuncDecl( expr.decl.actual )
 
 		If decl.munged.StartsWith( "$" ) Return TransIntrinsicExpr( decl,expr.expr,expr.args )
 		
@@ -1033,8 +1033,31 @@ End Rem
 		InternalErr "TTranslator.TransInvokeMemberExpr"
 	End Method
 	
+	Method TransLambdaExpr:String(expr:TLambdaExpr)
+		Local decl:TFuncDecl = TFuncDecl(expr.funcDecl.actual)
+
+		If Not decl.munged Then
+			MungDecl decl
+		End If
+		
+		If expr.invokedDirectly Then
+			If processingReturnStatement = 1 Then
+				If decl Then
+					processingReturnStatement :+ 1
+					Return CreateLocal(expr)
+				End If
+			Else
+				Return TransFunc(decl, expr.args, Null)
+			End If
+		Else
+			Return decl.munged
+		End If
+		
+		InternalErr "TTranslator.TransLambdaExpr"
+	End Method
+	
 	Method TransInvokeSuperExpr$( expr:TInvokeSuperExpr )
-		Local decl:TFuncDecl=TFuncDecl( expr.origFuncDecl.actual ),t$
+		Local decl:TFuncDecl=TFuncDecl( expr.origFuncDecl.actual )
 
 		If decl.munged.StartsWith( "$" ) Return TransIntrinsicExpr( decl,expr )
 		

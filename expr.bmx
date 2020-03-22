@@ -830,6 +830,69 @@ Type TInvokeMemberExpr Extends TExpr
 
 End Type
 
+Type TLambdaExpr Extends TExpr
+	Field funcDecl:TFuncDecl
+	Field invokedDirectly:Int
+	Field args:TExpr[]
+	
+	Method Create:TLambdaExpr(funcDecl:TFuncDecl)
+		Self.funcDecl = funcDecl
+		Return Self
+	End Method
+	
+	Method Copy:TExpr()
+		Return Self
+	End Method
+	
+	Method ToString:String()
+		Local t:String
+		For Local arg:TArgDecl = EachIn funcDecl.argDecls
+			t :+ "," + arg.ToString()
+		Next
+		Return "TLambdaExpr(" + t[1..] + ")"
+	End Method
+	
+	' when lambda is assigned to a variable:
+	Method Semant:TExpr(options:Int = 0)
+		If exprType Then Return Self
+		
+		invokedDirectly = False
+		
+		If Not funcDecl.retType
+			funcDecl.Semant()
+		End If
+		
+		funcDecl.retType.Semant()
+		
+		exprType = New TFunctionPtrType.Create(funcDecl)
+		
+		Return Self
+	End Method
+	
+	' when lambda is invoked directly:
+	Method SemantFunc:TExpr(args:TExpr[], throwError:Int, funcCall:Int)
+		Semant
+		
+		invokedDirectly = True
+		
+		' switch from the actual function type to return type
+		exprType = TFunctionPtrType(exprType).func.retType
+		
+		Self.args = SemantArgs(args)
+		
+		Return Self
+	End Method
+	
+	Method Trans:String()
+		Return _trans.TransLambdaExpr(Self)
+	End Method
+	
+	Method TransStmt:String()
+		Return _trans.TransLambdaExpr(Self)
+	End Method
+	
+End Type
+
 Type TNewObjectExpr Extends TExpr
 	Field ty:TType
 	Field args:TExpr[]

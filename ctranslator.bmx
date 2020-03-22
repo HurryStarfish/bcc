@@ -6099,7 +6099,9 @@ End If
 		' emit nested functions/classes for localmain
 		' emit nested protos
 		For Local fdecl:TFuncDecl = EachIn app.mainFunc._decls
-			EmitFuncDecl(fdecl, True)
+			If Not (fdecl.IsLambda()) Then
+				EmitFuncDecl(fdecl, True)
+			End If
 		Next
 		
 		' emit nested bodies

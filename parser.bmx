@@ -621,6 +621,40 @@ Type TParser Extends TGenProcessor
 		
 		Return ty
 	End Method
+	
+	Method ParseLambdaExpr:TLambdaExpr()
+		If Not _module.IsSuperStrict() Err "Lambda expressions can only be used in SuperStrict code."
+		
+		Local attrs:Int = FUNC_LAMBDA
+		
+		SetErr
+		
+		Parse "\"
+		
+		' the lambda's type is unknown for now; it will be known once the
+		' body is semanted, because the lambda's return type is inferred from that
+		Local ty:TType = Null
+		Local args:TArgDecl[] = ParseFuncParamDecl(True) ' TODO: target typing for the parameters
+		
+		Parse "->"
+		
+		attrs :| DECL_API_DEFAULT ' calling convention
+		
+		Local funcDecl:TFuncDecl = New TFuncDecl.CreateF("lambda", ty, args, attrs)
+		
+		PushBlock funcDecl
+		Local lambdaBodyExpr:TExpr = ParseExpr()
+		Local returnStmt:TReturnStmt = New TReturnStmt.Create(lambdaBodyExpr)
+		
+		_block.AddStmt returnStmt
+		PopBlock
+		
+		' TODO: add support for closures
+		
+		Local lambdaExpr:TLambdaExpr = New TLambdaExpr.Create(funcDecl)
+		
+		Return lambdaExpr
+	End Method
 
 	Method ParseArrayExpr:TArrayExpr()
 		Parse "["
@@ -1057,6 +1091,10 @@ Type TParser Extends TGenProcessor
 				expr=ParseExpr()
 				expr=New TStackAllocExpr.Create( expr )
 			EndIf
+		Case "\"
+			Local lambdaExpr:TLambdaExpr = ParseLambdaExpr()
+			_block.InsertDecl lambdaExpr.funcDecl
+			expr = lambdaExpr
 		Default
 			Select _tokeType
 			Case TOKE_IDENT
@@ -2740,11 +2778,23 @@ End Rem
 		Err "Unrecognized calling convention '" + api+ "'"
 	End Method
 
-	Method ParseFuncParamDecl:TArgDecl[]()
+	Method ParseFuncParamDecl:TArgDecl[](isLambdaExprParams:Int = False)
 		Local args:TArgDecl[]
-		Parse "("
+		
+		Local hasParens:Int
+		Local terminatorToken:String
+		If isLambdaExprParams Then
+			' parentheses are optional for lambda expressions
+			hasParens = CParse("(")
+			If hasParens Then terminatorToken = ")" Else terminatorToken = "->"
+		Else
+			Parse "("
+			hasParens = True
+			terminatorToken = ")"
+		End If
+		
 		SkipEols
-		If _toke<>")"
+		If _toke <> terminatorToken Then
 			Local nargs:Int
 			Repeat
 				
@@ -2765,13 +2815,15 @@ End Rem
 				If args.Length=nargs args=args + New TArgDecl[10]
 				args[nargs]=arg
 				nargs:+1
-				If _toke=")" Exit
+				If _toke = terminatorToken Then Exit
 
 				Parse ","
 			Forever
 			args=args[..nargs]
 		EndIf
-		Parse ")"
+		
+		If hasParens Then Parse ")"
+		
 		Return args
 	End Method
 	
