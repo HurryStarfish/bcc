@@ -3600,3 +3600,50 @@ Type TStackAllocExpr Extends TBuiltinExpr
 	End Method
 
 End Type
+
+Type TIfExpr Extends TExpr
+	Field condExpr:TExpr
+	Field thenExpr:TExpr
+	Field elseExpr:TExpr
+	
+	Method Create:TIfExpr(condExpr:TExpr, thenExpr:TExpr, elseExpr:TExpr)
+		Self.condExpr = condExpr
+		Self.thenExpr = thenExpr
+		Self.elseExpr = elseExpr
+		Return Self
+	End Method
+	
+	Method Copy:TExpr()
+		Return New TIfExpr.Create(condExpr.Copy(), thenExpr.Copy(), elseExpr.Copy())
+	End Method
+	
+	Method Semant:TExpr(options:Int = 0)
+		condExpr = condExpr.SemantAndCast(New TBoolType, CAST_EXPLICIT)
+		thenExpr = thenExpr.Semant()
+		elseExpr = elseExpr.Semant()
+		
+		exprType = BalanceTypes(thenExpr.exprType, elseExpr.exprType)
+		thenExpr = thenExpr.Cast(exprType)
+		elseExpr = elseExpr.Cast(exprType)
+		Return Self
+	End Method
+	
+	Method SemantFunc:TExpr(args:TExpr[], throwError:Int = True, funcCall:Int = False)
+		condExpr = condExpr.SemantAndCast(New TBoolType, CAST_EXPLICIT)
+		thenExpr = thenExpr.SemantFunc(args, throwError, funcCall)
+		elseExpr = elseExpr.SemantFunc(args, throwError, funcCall)
+		
+		exprType = BalanceTypes(thenExpr.exprType, elseExpr.exprType)
+		thenExpr = thenExpr.Cast(exprType)
+		elseExpr = elseExpr.Cast(exprType)
+		Return Self
+	End Method
+	
+	Method Trans$()
+		Return _trans.TransIfExpr(Self)
+	End Method
+	
+End Type
+
+
+

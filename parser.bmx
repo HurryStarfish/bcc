@@ -1091,6 +1091,8 @@ Type TParser Extends TGenProcessor
 				expr=ParseExpr()
 				expr=New TStackAllocExpr.Create( expr )
 			EndIf
+		Case "if"
+			expr = ParseIfExpr()
 		Case "\"
 			Local lambdaExpr:TLambdaExpr = ParseLambdaExpr()
 			_block.InsertDecl lambdaExpr.funcDecl
@@ -1526,8 +1528,18 @@ End Rem
 		Local stmt:TIfStmt=New TIfStmt.Create( expr,thenBlock,elseBlock )
 		_block.AddStmt stmt
 	End Method
-
-
+	
+	Method ParseIfExpr:TIfExpr()
+		Parse "if"
+		Local condExpr:TExpr = ParseExpr()
+		Parse "then"
+		Local thenExpr:TExpr = ParseExpr()
+		Parse "else"
+		Local elseExpr:TExpr = ParseExpr()
+		
+		Return New TIfExpr.Create(condExpr, thenExpr, elseExpr)
+	End Method
+	
 	Method ParseWhileStmt(loopLabel:TLoopLabelDecl = Null)
 		Parse "while"
 

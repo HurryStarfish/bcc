@@ -1648,6 +1648,18 @@ End Rem
 		EndIf
 	End Method
 	
+	Method TransIfExpr$(expr:TIfExpr)
+		If TConstExpr(expr.condExpr)
+			If TConstExpr(expr.condExpr).value Then
+				Return expr.thenExpr.Trans()
+			Else
+				Return expr.elseExpr.Trans()
+			EndIf
+		Else
+			Return Bra(expr.condExpr.Trans() + "?" + expr.thenExpr.Trans() + ":" + expr.elseExpr.Trans())
+		End If
+	End Method
+	
 	Method FreeVarsIfRequired(removeFromStack:Int = True)
 		If removeFromStack
 			Local v:String = String(customVarStack.Pop())
