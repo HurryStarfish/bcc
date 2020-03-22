@@ -1555,17 +1555,23 @@ End Rem
 
 		Local varid$,varty:TType,varlocal:Int
 		Local varExpr:TExpr
+		Local inferVarType:Int
 
 		If CParse( "local" )
 			varlocal=True
 			varid=ParseIdent()
-
-			varty=ParseDeclType()
-			If varty._flags & (TType.T_CHAR_PTR | TType.T_SHORT_PTR) Then
-				DoErr "Illegal variable type"
-			End If
 			
-			Parse( "=" )
+			If CParse(":=") Then
+				inferVarType = True
+			Else
+				inferVarType = False
+				varty=ParseDeclType()
+				If varty._flags & (TType.T_CHAR_PTR | TType.T_SHORT_PTR) Then
+					DoErr "Illegal variable type"
+				End If
+				
+				Parse( "=" )
+			End If
 			
 			' use an ident expr to pass the variable to different parts of the statement.
 			' the original implementation passed decl references, which cause problems if we wanted to
@@ -1618,9 +1624,15 @@ End Rem
 		EndIf
 
 		Local init:TStmt,expr:TExpr,incr:TStmt
-
-		If varlocal
-			Local indexVar:TLocalDecl=New TLocalDecl.Create( varid,varty,New TCastExpr.Create( varty,from,CAST_EXPLICIT ),0 )
+		
+		If varlocal Then
+			Local indexVar:TLocalDecl
+			If inferVarType Then
+				indexVar=New TLocalDecl.Create( varid,varty,from,0 )
+			Else
+				indexVar=New TLocalDecl.Create( varid,varty,New TCastExpr.Create( varty,from,CAST_EXPLICIT ),0 )
+			End If
+			
 			init=New TDeclStmt.Create( indexVar )
 '			expr=New TBinaryCompareExpr.Create( op,New TVarExpr.Create( indexVar ),New TCastExpr.Create( varty,term,1 ) )
 '			incr=New TAssignStmt.Create( "=",New TVarExpr.Create( indexVar ),New TBinaryMathExpr.Create( "+",New TVarExpr.Create( indexVar ),New TCastExpr.Create( varty,stp,1 ) ) )
@@ -2112,7 +2124,7 @@ End Rem
 		Local id$=ParseIdent()
 		Local ty:TType
 		Local init:TExpr
-		
+		Local inferType:Int = False
 		
 		If attrs & DECL_EXTERN
 			ty=ParseDeclType(attrs & DECL_API_STDCALL)
@@ -2122,9 +2134,9 @@ End Rem
 					init=ParseExpr()
 				End If
 			End If
-'		Else If CParse( ":=" )
-'			init=ParseExpr()
-'			ty = init.exprType
+		Else If CParse(":=")
+			init = ParseExpr()
+			' type is inferred
 		Else
 			ty=ParseDeclType(attrs & DECL_API_STDCALL)
 
@@ -2163,17 +2175,17 @@ End Rem
 		Local decl:TValDecl
 
 		Select toke
-		Case "global"
-			decl=New TGlobalDecl.Create( id,ty,init,attrs )
-		Case "field"
-			decl=New TFieldDecl.Create( id,ty,init,attrs )
-
-			If TFunctionPtrType(ty) Then
-				TFunctionPtrType(ty).func.attrs :| FUNC_FIELD
-			End If
-
-		Case "const"  decl=New TConstDecl.Create( id,ty,init,attrs )
-		Case "local"  decl=New TLocalDecl.Create( id,ty,init,attrs )
+			Case "global"
+				decl=New TGlobalDecl.Create( id,ty,init,attrs )
+			Case "field"
+				decl=New TFieldDecl.Create( id,ty,init,attrs )
+				
+				If TFunctionPtrType(ty) Then
+					TFunctionPtrType(ty).func.attrs :| FUNC_FIELD
+				End If
+				
+			Case "const"  decl=New TConstDecl.Create( id,ty,init,attrs )
+			Case "local"  decl=New TLocalDecl.Create( id,ty,init,attrs )
 		End Select
 
 		If decl.IsExtern()
@@ -4235,7 +4247,7 @@ End Rem
 		If ty expr=expr.Cast( ty )
 	
 		val=expr.Eval()
-	Catch error:String
+	Catch Error:String
 		val = "0"
 	End Try
 	

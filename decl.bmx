@@ -533,8 +533,9 @@ Type TValDecl Extends TDecl
 				End If
 			End If
 		Else If declInit
+			' type is inferred
 			init=declInit.Copy().Semant()
-			ty=init.exprType
+			ty=init.exprType.Copy()
 		End If
 		
 		If init Then
@@ -595,6 +596,7 @@ Type TConstDecl Extends TValDecl
 				_appInstance.mapStringConsts(value)
 			End If
 		End If
+		
 	End Method
 	
 	Method ToString$()
@@ -604,7 +606,7 @@ Type TConstDecl Extends TValDecl
 End Type
 
 Type TVarDecl Extends TValDecl
-
+	
 End Type
 
 Type TLocalDecl Extends TVarDecl

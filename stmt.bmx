@@ -272,15 +272,22 @@ Type TReturnStmt Extends TStmt
 				TIdentExpr(expr).isRhs = True
 			End If
 			If fdecl.IsCtor() Err "Constructors may not return a value."
-			If TVoidType( fRetType ) Then
-				Local errorText:String = "Function can not return a value."
-				If Not _env.ModuleScope().IsSuperStrict() Then
-					errorText :+ " You may have Strict type overriding SuperStrict type."
+			If fdecl.IsLambda() Then
+				' the return type of the surrounding lambda is still unknown and will be determined
+				' by the type of this very return statement, so no type check or cast should happen here
+				expr = expr.Semant()
+				fRetType = expr.exprType
+			Else
+				If TVoidType( fRetType ) Then
+					Local errorText:String = "Function can not return a value."
+					If Not _env.ModuleScope().IsSuperStrict() Then
+						errorText :+ " You may have Strict type overriding SuperStrict type."
+					End If
+					Err errorText
 				End If
-				Err errorText
+				expr=expr.SemantAndCast( fRetType  )
+				If TIdentTypeExpr(expr) Err "Function must return a value."
 			End If
-			expr=expr.SemantAndCast( fRetType  )
-			If TIdentTypeExpr(expr) Err "Function must return a value."
 		Else If fdecl.IsCtor()
 			expr=New TSelfExpr.Semant()
 		Else If Not TVoidType( fRetType  )
@@ -637,22 +644,33 @@ Type TForStmt Extends TLoopStmt
 	Method OnSemant()
 
 		PushEnv block
-
-		Local updateCastTypes:Int
-		If TAssignStmt(init) And TIdentExpr(TAssignStmt(init).lhs) Then
-			updateCastTypes = True
-		Else
+		
+		Function UpdateCastTypes(this:TForStmt, ty:TType)
+			' This in case the "ty" field in the casts is currently Null, because
+			' we didn't know at the time of creating the statement what the variable type was.
+			' Now we do, so we'll fill in the gaps.
+			TCastExpr(TBinaryCompareExpr(this.expr).rhs).ty = ty.Copy()
+			TCastExpr(TBinaryMathExpr(TAssignStmt(this.incr).rhs).rhs).ty = ty.Copy()
+		End Function
+		
+		Local updateCastTypesForInferredDecl:Int = TDeclStmt(init) And Not TLocalDecl(TDeclStmt(init).decl).declTy
+		Local updateCastTypesForAssignment:Int = TAssignStmt(init) And TIdentExpr(TAssignStmt(init).lhs)
+		
+		If updateCastTypesForInferredDecl Then
+			Local decl:TLocalDecl = TLocalDecl(TDeclStmt(init).decl)
+			decl.Semant
+			UpdateCastTypes Self, decl.ty
+		End If
+			
+		If Not updateCastTypesForAssignment
 			' semant right-hand side first, in case the loop variable is shadowing one from rhs
 			TBinaryCompareExpr(expr).rhs = TBinaryCompareExpr(expr).rhs.Semant()
 		End If
 
 		init.Semant
 
-		If updateCastTypes Then
-			' ty in the casts are currently Null - we didn't know at the time of creating the statement, what the variable type was.
-			' Now we do, so we'll fill in the gaps.
-			TCastExpr(TBinaryCompareExpr(expr).rhs).ty = TAssignStmt(init).lhs.exprType.Copy()
-			TCastExpr(TBinaryMathExpr(TAssignStmt(incr).rhs).rhs).ty = TAssignStmt(init).lhs.exprType.Copy()
+		If updateCastTypesForAssignment Then
+			UpdateCastTypes Self, TAssignStmt(init).lhs.exprType
 		End If
 
 		' scope for expression part should be block-scope
@@ -734,6 +752,7 @@ Type TForEachinStmt Extends TLoopStmt
 	End Method
 	
 	Method OnSemant()
+		Const NotIterableError:String = "EachIn requires a type that implements IIterable or has a suitable ObjectEnumerator method."
 		
 		expr=expr.Semant()
 		
@@ -862,7 +881,7 @@ Type TForEachinStmt Extends TLoopStmt
 			Else
 				Local declList:TFuncDeclList = TFuncDeclList(TObjectType(expr.exprType).classDecl.GetDecl("objectenumerator"))
 				If Not declList Then
-					Err "Use of EachIn requires enumerable Type with either ObjectEnumerator method or one which implements IIterable interface."
+					Err NotIterableError
 				End If
 			End If
 			
@@ -978,7 +997,7 @@ Type TForEachinStmt Extends TLoopStmt
 			End If
 			
 		Else
-			InternalErr "TForEachinStmt.OnSemant"
+			Err NotIterableError
 		EndIf
 		
 		block.Semant
